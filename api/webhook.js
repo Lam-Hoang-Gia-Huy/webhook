@@ -6,10 +6,19 @@ app.use(express.json());
 
 const pool = new Pool({
   connectionString:
+    process.env.DATABASE_URL ||
     "postgres://neondb_owner:npg_WtV6Y5yvSpkm@ep-shiny-mode-a4hujpv3-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require",
   ssl: {
-    rejectUnauthorized: false, // Thêm để tránh lỗi TLS nếu cần
+    rejectUnauthorized: false,
   },
+  max: 20,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000,
+});
+
+// Bắt lỗi unhandled rejection
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("Unhandled Rejection at:", promise, "reason:", reason);
 });
 
 // Tạo bảng nếu chưa tồn tại
@@ -32,7 +41,7 @@ app.post("/api/webhook", async (req, res) => {
   const payload = req.body;
   console.log("Received Zalo webhook:", JSON.stringify(payload, null, 2));
 
-  // Trả về 200 OK ngay lập tức để Zalo chấp nhận
+  // Trả về 200 OK ngay lập tức
   res.status(200).json({ status: "received" });
 
   if (!payload) {
@@ -48,12 +57,17 @@ app.post("/api/webhook", async (req, res) => {
     }
 
     const senderId = payload.sender?.id || null;
-    const userId = payload.user_id_by_app || null; // Sử dụng user_id_by_app từ payload
+    const userId = payload.user_id_by_app || null;
     const recipientId = payload.recipient?.id || null;
-    const { msg_id: messageId, text, timestamp } = payload.message || {};
+    const { msg_id: messageId, text } = payload.message || {};
+    const timestamp = payload.timestamp ? parseInt(payload.timestamp) : null;
 
     if (!messageId || !text || !timestamp) {
-      console.log("Missing required message fields");
+      console.log("Missing required message fields:", {
+        messageId,
+        text,
+        timestamp,
+      });
       return;
     }
 
@@ -67,7 +81,7 @@ app.post("/api/webhook", async (req, res) => {
         eventName,
         messageId,
         text,
-        parseInt(timestamp),
+        timestamp,
       ]
     );
 
