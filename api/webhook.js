@@ -1,6 +1,6 @@
 const express = require("express");
 const app = express();
-const fs = require("fs"); // Giữ nguyên để tránh lỗi nếu không xóa hoàn toàn
+const fs = require("fs");
 
 app.use(express.json());
 
@@ -21,17 +21,26 @@ app.post("/api/webhook", (req, res) => {
 
   try {
     const eventName = payload["event_name"];
-    if (!eventName || eventName !== "user_send_text") {
+    if (
+      !eventName ||
+      ![
+        "user_send_text",
+        "user_send_image",
+        "user_send_sticker",
+        "user_send_gif",
+        "user_send_link",
+      ].includes(eventName)
+    ) {
       console.log(`Ignoring event: ${eventName || "undefined"}`);
       return;
     }
 
     const senderId = payload.sender?.id || null;
     const userId = payload.user_id_by_app || null;
-    const { msg_id: messageId, text } = payload.message || {};
+    const { msg_id: messageId, text, attachments } = payload.message || {};
     const timestamp = payload.timestamp ? parseInt(payload.timestamp) : null;
 
-    if (!messageId || !text || !timestamp) {
+    if (!messageId || !timestamp) {
       console.log("Missing required message fields:", {
         messageId,
         text,
@@ -40,15 +49,31 @@ app.post("/api/webhook", (req, res) => {
       return;
     }
 
+    // Chuẩn bị dữ tin nhắn dựa trên loại sự kiện
+    let messageData = {
+      senderId,
+      userId,
+      messageId,
+      timestamp,
+    };
+
+    if (text) {
+      messageData.text = text; // Lưu text nếu có
+    }
+
+    if (attachments && Array.isArray(attachments) && attachments.length > 0) {
+      const attachment = attachments[0]; // Lấy attachment đầu tiên
+      messageData.attachmentType = attachment.type;
+      messageData.attachmentUrl =
+        attachment.payload.url || attachment.payload.thumbnail || null; // Lấy URL hoặc thumbnail
+      if (attachment.type === "link") {
+        messageData.attachmentDescription =
+          attachment.payload.description || null;
+      }
+    }
+
     // Thử ghi file (sẽ lỗi trên Vercel, nhưng giữ để tương thích)
     try {
-      const messageData = {
-        senderId,
-        userId,
-        messageId,
-        text,
-        timestamp,
-      };
       fs.writeFileSync(
         "latest_zalo_message.txt",
         JSON.stringify(messageData, null, 2),
@@ -58,13 +83,7 @@ app.post("/api/webhook", (req, res) => {
     } catch (fileError) {
       console.error("File write failed (EROFS):", fileError);
       // Nếu ghi file thất bại, lưu vào bộ nhớ tạm
-      latestMessage = {
-        senderId,
-        userId,
-        messageId,
-        text,
-        timestamp,
-      };
+      latestMessage = messageData;
       console.log("Saved new message to memory as fallback");
     }
   } catch (error) {
