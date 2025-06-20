@@ -6,10 +6,10 @@ app.use(express.json());
 
 const pool = new Pool({
   connectionString:
-    "postgres://neondb_owner:npg_WtV6Y5yvSpkm@ep-shiny-mode-a4hujpv3-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require", // Thay bằng chuỗi kết nối của bạn
+    "postgres://neondb_owner:npg_WtV6Y5yvSpkm@ep-shiny-mode-a4hujpv3-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require",
 });
 
-// Tạo bảng nếu chưa tồn tại
+// Tạo bảng nếu chưa tồn tại (bao gồm cả sender_id và recipient_id để tương thích với payload Zalo)
 pool.query(`
   CREATE TABLE IF NOT EXISTS zalo_messages (
     id SERIAL PRIMARY KEY,
@@ -42,13 +42,11 @@ app.post("/api/webhook", async (req, res) => {
       return res.status(200).json({ status: "ignored" });
     }
 
-    const {
-      app_id: appId,
-      sender: { id: senderId },
-      user_id_by_app: userId,
-      recipient: { id: recipientId },
-      message: { msg_id: messageId, text: text, timestamp: timestamp },
-    } = payload;
+    // Xử lý payload linh hoạt
+    let senderId = payload.sender?.id || payload.user_id || null;
+    let recipientId = payload.recipient?.id || null;
+    const userId = payload.user_id || payload.user_id_by_app || null;
+    const { msg_id: messageId, text, timestamp } = payload.message || {};
 
     if (!messageId || !text || !timestamp) {
       return res
@@ -59,7 +57,7 @@ app.post("/api/webhook", async (req, res) => {
     await pool.query(
       "INSERT INTO zalo_messages (app_id, sender_id, user_id, recipient_id, event_name, message_id, text, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
       [
-        appId,
+        payload.app_id,
         senderId,
         userId,
         recipientId,
@@ -71,7 +69,7 @@ app.post("/api/webhook", async (req, res) => {
     );
 
     console.log(
-      `Processed message - App ID: ${appId}, Sender ID: ${senderId}, User ID: ${userId}, Text: ${text}, Timestamp: ${timestamp}`
+      `Processed message - App ID: ${payload.app_id}, Sender ID: ${senderId}, User ID: ${userId}, Recipient ID: ${recipientId}, Message ID: ${messageId}, Text: ${text}, Timestamp: ${timestamp}`
     );
     res
       .status(200)
