@@ -7,9 +7,12 @@ app.use(express.json());
 const pool = new Pool({
   connectionString:
     "postgres://neondb_owner:npg_WtV6Y5yvSpkm@ep-shiny-mode-a4hujpv3-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require",
+  ssl: {
+    rejectUnauthorized: false, // Thêm để tránh lỗi TLS nếu cần
+  },
 });
 
-// Tạo bảng nếu chưa tồn tại (bao gồm cả sender_id và recipient_id để tương thích với payload Zalo)
+// Tạo bảng nếu chưa tồn tại
 pool.query(`
   CREATE TABLE IF NOT EXISTS zalo_messages (
     id SERIAL PRIMARY KEY,
@@ -29,29 +32,29 @@ app.post("/api/webhook", async (req, res) => {
   const payload = req.body;
   console.log("Received Zalo webhook:", JSON.stringify(payload, null, 2));
 
+  // Trả về 200 OK ngay lập tức để Zalo chấp nhận
+  res.status(200).json({ status: "received" });
+
   if (!payload) {
-    return res
-      .status(400)
-      .json({ status: "error", message: "No payload provided" });
+    console.log("No payload provided");
+    return;
   }
 
   try {
     const eventName = payload["event_name"];
     if (!eventName || eventName !== "user_send_text") {
       console.log(`Ignoring event: ${eventName || "undefined"}`);
-      return res.status(200).json({ status: "ignored" });
+      return;
     }
 
-    // Xử lý payload linh hoạt
-    let senderId = payload.sender?.id || payload.user_id || null;
-    let recipientId = payload.recipient?.id || null;
-    const userId = payload.user_id || payload.user_id_by_app || null;
+    const senderId = payload.sender?.id || null;
+    const userId = payload.user_id_by_app || null; // Sử dụng user_id_by_app từ payload
+    const recipientId = payload.recipient?.id || null;
     const { msg_id: messageId, text, timestamp } = payload.message || {};
 
     if (!messageId || !text || !timestamp) {
-      return res
-        .status(400)
-        .json({ status: "error", message: "Missing required message fields" });
+      console.log("Missing required message fields");
+      return;
     }
 
     await pool.query(
@@ -71,12 +74,8 @@ app.post("/api/webhook", async (req, res) => {
     console.log(
       `Processed message - App ID: ${payload.app_id}, Sender ID: ${senderId}, User ID: ${userId}, Recipient ID: ${recipientId}, Message ID: ${messageId}, Text: ${text}, Timestamp: ${timestamp}`
     );
-    res
-      .status(200)
-      .json({ status: "received", message_id: messageId, user_id: userId });
   } catch (error) {
     console.error("Error processing webhook:", error);
-    res.status(500).json({ status: "error", message: error.message });
   }
 });
 
